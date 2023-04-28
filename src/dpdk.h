@@ -76,6 +76,10 @@
 #define RTE_IPV6_UDPTCP_CKSUM(iph, th) rte_ipv6_udptcp_cksum((const struct rte_ipv6_hdr *)iph, (const void *)th)
 #endif
 
+#if RTE_VERSION < RTE_VERSION_NUM(21, 11, 0, 0)
+#define RTE_MBUF_F_TX_VLAN  PKT_TX_VLAN
+#endif
+
 struct config;
 int dpdk_init(struct config *cfg, char *argv0);
 void dpdk_run(int (*lcore_main)(void*), void* data);

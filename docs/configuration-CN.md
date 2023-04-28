@@ -39,14 +39,27 @@
 - dperf server上不需要配置'num'。
 
 对于dperf client:
-- dperf client每隔'interval'时间发送一个请求。
+- dperf client每隔'interval'时间发送一个请求；当'interval'为0时，client收到udp响应后会立刻发起新请求。
 - dperf client在发送完'num'个请求后关闭连接。
 
 'keepalive'使用场景：
 - 并发测试：设置较大的并发连接数（cc 10m），较大的interval，如60s。
 - 带宽测试：设置较大的packet_size（如 1500），较小的interval（如1ms）。
 - 单向PPS测试：设置flood，较小packet_size（如64），较小的并发连接数cc（如3000），较小的interval（如1ms或10us）。
-- 双向PPS测试：设置较小packet_size（如64），较小的并发连接数cc（如3000），较小的interval（如1ms或10us）。
+- 双向PPS测试：设置较小packet_size（如64），较小的并发连接数cc（如3000），较小的interval（如1ms或1us）。
+- udp大象流测试：设置interval为0us。
+
+## pipeline
+- syntax: pipeline num
+- default: 0
+- required: no
+- mode: client
+
+udp client在一个连接里同时发起num个请求，可以成倍增大PPS。
+
+Example:
+- 单向udp大象流: cc 1; pipeline 4; keepalive 1us; flood
+- 双向udp大象流: cc 1; pipeline 4; keepalive 0us
 
 ## cpu
 - syntax: cpu n0 n1 n2-n3...
@@ -93,9 +106,9 @@ Reference:
 配置dperf使用的网口。通过配置多条'port'，dperf就可以使用多个口。
 作为DPDK程序，dperf需要从操作系统接管这些网口。在启动dperf之前，你需要使用DPDK脚本'dpdk-devbind.py'绑定驱动（Mellanox网卡除外）。
 - PCI: 网口的PIC号，使用'dpdk-devbind.py -s'可查看PCI；
-- BOND: 格式为bondMode:Policy(PIC0,PCI1,...), Mode取值为[0-4], Policy为[0-2];
+- BOND: 格式为bondMode:Policy(PIC0,PCI1,...), Mode取值为[0-4], Policy为[0-2]；
 - IPAddress: 给网口指定一个IP地址，用于与'Gateway'互连；
-- Gateway: 网关的IP地址。dperf没有路由能力，它只会把报文发给网关，ARP、NS、ND报文除外;
+- Gateway: 网关的IP地址。dperf没有路由能力，它只会把报文发给网关，ARP、NS、ND报文除外；
 - Gateway-MAC: 可选，网关的MAC地址。
 
 Example:
@@ -226,13 +239,21 @@ Example:
 
 注意：dperf在启动时会把所有的socket分配好，所以不要配置太大的端口范围。
 
+## payload_random
+- syntax: payload_random
+- default: -
+- required: no
+- mode: client, server
+
+设置payload为随机的字符('a'-'z')，默认为全'a'。
+
 ## payload_size
 - syntax: payload_size Number(>=1)
 - default: -
 - required: no
 - mode: client, server
 
-设置请求与响应的大小，单位是字节。
+设置请求与响应的大小，单位是字节，不包括L2、L3、L4头部大小。
 对于tcp协议，如果payload_size小于70，dperf会强制为70，这是最小的HTTP报文长度。
 如果要设置更小的数据报文，请使用packet_size。
 
@@ -324,7 +345,7 @@ kni接口的IP地址与路由需要手动配置, 只能配置为'port'的IP。
 注意：tos对kni接口发出的报文不生效。
 
 ## rss
-- syntax: rss [l3/l3l4/auto] [mq_rx_none|mq_rx_rss]
+- syntax: rss [l3/l3l4/auto] [mq_rx_none|mq_rx_rss|l3|l3l4]
 - default: -
 - required: no
 - mode: client, server
@@ -332,7 +353,7 @@ kni接口的IP地址与路由需要手动配置, 只能配置为'port'的IP。
 使用网卡RSS分流。没有FDIR特性的网卡需要开启多队列/多线程时需要开启此开关。
 - l3: 使用基于IP地址的对称哈希算法分流，要求网卡支持修改RSS配置, 这是默认选项
 - l3l4: 使用l3l4对称哈希算法分流, 要求网卡支持修改RSS配置
-- auto: 使用网卡默认算法分流, 要求一个port只能配置一个server IP
+- auto: 使用网卡默认算法分流, 可以指定为l3或者l3l4, 要求一个port只能配置一个server IP
 - mq_rx_rss: 使用DPDK参数'RTE_ETH_MQ_RX_RSS'开启网卡的RSS特性, 这是默认参数
 - mq_rx_none: 不使用DPDK参数'RTE_ETH_MQ_RX_RSS'去配置网卡，部分网卡不允许配置，只能用在auto模式
 
@@ -354,7 +375,7 @@ kni接口的IP地址与路由需要手动配置, 只能配置为'port'的IP。
 
 当开启'flood'后，可以使用'change_ip'来修改发送报文的目的IP。
 'change_ip'可以配置多行，最多支持65536个IP地址。这些IP地址平均分配到每个线程。
-dperf在发送每个TCP/UDP报文时，修改报文的目的IP; dperf采用轮询方式从地址池中获取IP。
+dperf在发送每个TCP/UDP报文时，修改报文的目的IP；dperf采用轮询方式从地址池中获取IP。
 'IPAddress'是起始地址，'Step'表示下一个IP的间隔，'Number'表示IP总数。
 
 Example:
@@ -384,3 +405,11 @@ Example:
 - mode: client
 
 设置客户端的本地端口范围。在Google Cloud上建议设置本地端口范围为[1000-65535]。
+
+## client_hop
+- syntax: client_hop
+- default: -
+- required: no
+- mode: client
+
+client在创建新连接时同时改变IP与端口。

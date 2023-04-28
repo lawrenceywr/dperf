@@ -18,6 +18,8 @@
 ## Build dperf With DPDK-20
 ### Build DPDK
     #Suppose we use dpdk-20.11.2.
+    #Build dpdk-20.11.2
+    ./scripts/build_dpdk_2x.sh 20.11.2
 
     cd /root/dpdk/dpdk-stable-20.11.2
     meson build --prefix=/root/dpdk/dpdk-stable-20.11.2/mydpdk -Denable_kmods=true
@@ -30,6 +32,25 @@
 
 ### Run dperf
     export LD_LIBRARY_PATH=/root/dpdk/dpdk-stable-20.11.2/mydpdk/lib64/
+    ./build/dperf -h
+
+## Build dperf With DPDK-22.11
+### Build DPDK
+    #Suppose we use dpdk-22.11.1.
+    #Build dpdk-22.11.1
+    ./scripts/build_dpdk_2x.sh 22.11.1
+
+    cd /root/dpdk/dpdk-stable-22.11.1
+    meson build --prefix=/root/dpdk/dpdk-stable-22.11.1/mydpdk -Denable_kmods=true -Ddisable_libs=""
+    ninja -C build install
+
+### Build dperf
+    export PKG_CONFIG_PATH=/root/dpdk/dpdk-stable-22.11.1/mydpdk/lib64/pkgconfig/
+    cd dperf
+    make
+
+### Run dperf
+    export LD_LIBRARY_PATH=/root/dpdk/dpdk-stable-22.11.1/mydpdk/lib64/
     ./build/dperf -h
 
 ## Mellanox Interface Driver

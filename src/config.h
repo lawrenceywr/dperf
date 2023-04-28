@@ -80,6 +80,10 @@
 #define VLAN_ID_MIN         1
 #define VLAN_ID_MAX         4094
 
+#define PIPELINE_MIN        0
+#define PIPELINE_MAX        100
+#define PIPELINE_DEFAULT    0
+
 struct config {
     bool server;
     bool keepalive;
@@ -89,13 +93,17 @@ struct config {
     bool daemon;
     bool flood;
     bool jumbo;
+    bool payload_random;
+    bool client_hop;
     uint8_t rss;
     bool mq_rx_rss;
+    uint8_t rss_auto;
     bool quiet;
     bool tcp_rst;
     bool http;
     bool stats_http;    /* payload size >= HTTP_DATA_MIN_SIZE */
     uint8_t tos;
+    uint8_t pipeline;
     uint8_t tx_burst;
     uint8_t protocol;   /* TCP/UDP */
     uint16_t vlan_id;
@@ -158,6 +166,7 @@ int config_parse(int argc, char **argv, struct config *cfg);
 uint32_t config_get_total_socket_num(struct config *cfg, int id);
 struct netif_port *config_port_get(struct config *cfg, int thread_id, int *p_queue_id);
 void config_set_tsc(struct config *cfg, uint64_t hz);
+void config_set_payload(struct config *cfg, char *data, int len, int new_line);
 
 #endif
 

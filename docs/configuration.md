@@ -33,20 +33,32 @@ Turn off output statistics per second.
 Keepalive means that multiple requests and responses can be sent in one connection.
 
 For dperf server:
-- When 'keepalve' is not enabled, the dperf server closes the connection at the fastest speed by setting FIN in the response message. (Think about it, can a program calling the POSIX socket API do this?)
+- When 'keepalive' is not enabled, the dperf server closes the connection at the fastest speed by setting FIN in the response message. (Think about it, can a program calling the POSIX socket API do this?)
 - After enabling 'keepalive', the dperf server will wait for the client FIN/RST or a period of time before closing the connection.
 - The connection idle timeout of the dperf server is the retransmission timeout (about 8 seconds) plus 'timeout'.
 - 'num' does not need to be configured on the dperf server.
 
 For dperf client:
-- dperf client sends a request every 'interval' time.
+- dperf client sends a request every 'interval' time; when the 'interval' is 0, the client will initiate a new request immediately after receiving the UDP response.
 - The dperf client closed the connection after sending 'num' requests.
 
 'keepalive' usage scenarios:
 - CC test: set a larger number of concurrent connections (cc 10m), a larger interval, such as 60s.
 - tps test: set a larger packet_size (such as 1500) and a smaller interval (such as 1ms).
 - TX PPS test: set flood, smaller packet_size (eg 64), smaller number of concurrent connections cc (eg 3000), smaller interval (eg 1ms or 10us).
-- TX and RX PPS test: set a smaller packet_size (such as 64), a smaller number of concurrent connections cc (such as 3000), and a smaller interval (such as 1ms or 10us).
+- TX and RX PPS test: set a smaller packet_size (such as 64), a smaller number of concurrent connections cc (such as 3000), and a smaller interval (such as 1ms or 1us).
+
+## pipeline
+- syntax: pipeline num
+- default: 0
+- required: no
+- mode: client
+
+UDP Client initiates NUM requests at the same time in a connection, which can increase PPS.
+
+Example:
+- one-way UDP elephant flow: cc 1; pipeline 4; keepalive 1us; flood
+- two-way UDP elephant flow: cc 1; pipeline 4; keepalive 0us
 
 ## cpu
 - syntax: cpu n0 n1 n2-n3...
@@ -228,18 +240,26 @@ Set the port ranges that the server listens to, and the client sends packets to 
 
 Note: dperf will allocate all sockets at startup. Please do not set a large port range.
 
+## payload_random
+- syntax: payload_random
+- default: -
+- required: no
+- mode: client, server
+
+Set the payload to random characters ('a'-'z'), the default is all 'a'.
+
 ## payload_size
 - syntax: payload_size Number(>=1)
 - default: -
 - required: no
 - mode: client, server
 
-Set the size of the request and response, in bytes.
+Set the size of the request and response, in bytes, not including L2, L3, L4 header sizes.
 For tcp protocol, if payload_size is less than 70, dperf will be forced to 70, which is the minimum HTTP packet length.
 If you want to set smaller data packets, use packet_size.
 
 ## packet_size
-- syntax: pakcet_size Number(0-1514)
+- syntax: packet_size Number(0-1514)
 - default: -
 - required: no
 - mode: client, server
@@ -252,7 +272,7 @@ Sets the data packet size, including the Ethernet header, excluding the 4-byte F
 - required: no
 - mode: client, server
 
-Enable jumbo frames. After enabling jumbo frames, pakcet_size can be set to 9724.
+Enable jumbo frames. After enabling jumbo frames, packet_size can be set to 9724.
 Note: packet_size cannot exceed the MTU of the network environment.
 
 ## mss
@@ -334,7 +354,7 @@ Note: tos does not take effect on the packets sent by the kni interface.
 Use network card RSS distribution. This switch needs to be turned on when the network card without FDIR feature needs to enable multi-queue/multi-threading.
 - l3: Use the IP address-based symmetric hash algorithm to offload traffic, requiring the network card to support modifying the RSS configuration, which is the default option
 - l3l4: Use the l3l4 symmetric hash algorithm to split traffic, requiring the network card to support modifying the RSS configuration
-- auto: Use the default algorithm of the network card to split traffic, requiring only one server IP to be configured for a port
+- auto: Use the default algorithm of the network card to split traffic, which can be specified as l3 or l3l4, requiring only one server IP to be configured for a port
 - mq_rx_rss: Use the DPDK parameter 'RTE_ETH_MQ_RX_RSS' to enable the RSS feature of the network card, which is the default parameter
 - mq_rx_none: Do not use the DPDK parameter 'RTE_ETH_MQ_RX_RSS' to configure the network card, some network cards do not allow configuration, and can only be used in auto mode
 
@@ -348,7 +368,7 @@ Note: 'vxlan' cannot be used simultaneously with 'rss' yet.
 
 Set whether dperf replies rst to SYN packets requesting unopened TCP ports.
 
-##change_dip
+## change_dip
 - syntax: change_dip IPAddress Step Number
 - default: -
 - required: no
@@ -386,3 +406,11 @@ Set the path of the HTTP request.
 - mode: client
 
 Set the local port range for clients. It is recommended to set the local port range to [1000-65535] on Google Cloud.
+
+## client_hop
+- syntax: client_hop
+- default: -
+- required: no
+- mode: client
+
+client changes ip and port at the same time when create new connections.

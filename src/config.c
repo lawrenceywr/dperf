@@ -22,6 +22,7 @@
 #include <getopt.h>
 #include <dirent.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "client.h"
 #include "config_keyword.h"
@@ -39,6 +40,7 @@
 
 static int config_parse_daemon(int argc, char *argv[], void *data);
 static int config_parse_keepalive(int argc, char *argv[], void *data);
+static int config_parse_pipeline(int argc, char *argv[], void *data);
 static int config_parse_mode(int argc, char *argv[], void *data);
 static int config_parse_cpu(int argc, char *argv[], void *data);
 static int config_parse_socket_mem(int argc, char *argv[], void *data);
@@ -51,6 +53,7 @@ static int config_parse_client(int argc, char *argv[], void *data);
 static int config_parse_server(int argc, char *argv[], void *data);
 static int config_parse_change_dip(int argc, char *argv[], void *data);
 static int config_parse_listen(int argc, char *argv[], void *data);
+static int config_parse_payload_random(int argc, char *argv[], void *data);
 static int config_parse_payload_size(int argc, char *argv[], void *data);
 static int config_parse_packet_size(int argc, char *argv[], void *data);
 static int config_parse_mss(int argc, char *argv[], void *data);
@@ -70,6 +73,7 @@ static int config_parse_tcp_rst(int argc, char *argv[], void *data);
 static int config_parse_http_host(int argc, char *argv[], void *data);
 static int config_parse_http_path(int argc, char *argv[], void *data);
 static int config_parse_lport_range(int argc, char *argv[], void *data);
+static int config_parse_client_hop(int argc, char *argv[], void *data);
 
 #define _DEFAULT_STR(s) #s
 #define DEFAULT_STR(s)  _DEFAULT_STR(s)
@@ -81,6 +85,7 @@ static struct config_keyword g_config_keywords[] = {
     {"daemon", config_parse_daemon, ""},
     {"keepalive", config_parse_keepalive, "Interval(Timeout) [Number[0-" DEFAULT_STR(KEEPALIVE_REQ_NUM) "]], "
                 "eg 1ms/10us/1s"},
+    {"pipeline", config_parse_pipeline, "Number[" DEFAULT_STR(PIPELINE_MIN) "-" DEFAULT_STR(PIPELINE_MAX)"], default " DEFAULT_STR(PIPELINE_DEFAULT)},
     {"mode", config_parse_mode, "client/server"},
     {"cpu", config_parse_cpu, "n0 n1 n2-n3..., eg 0-4 7 8 9 10"},
     {"socket_mem", config_parse_socket_mem, "n0,n1,n2..."},
@@ -94,6 +99,7 @@ static struct config_keyword g_config_keywords[] = {
     {"server", config_parse_server, "IPAddress Number"},
     {"change_dip", config_parse_change_dip, "IPAddress Step Number"},
     {"listen", config_parse_listen, "Port Number, default 80 1" },
+    {"payload_random", config_parse_payload_random, ""},
     {"payload_size", config_parse_payload_size, "Number"},
     {"packet_size", config_parse_packet_size, "Number"},
     {"mss", config_parse_mss, "Number, default 1460"},
@@ -108,12 +114,13 @@ static struct config_keyword g_config_keywords[] = {
     {"kni", config_parse_kni, "[ifName], default " KNI_NAME_DEFAULT},
     {"tos", config_parse_tos, "Number[0x00-0xff], default 0, eg 0x01 or 1"},
     {"jumbo", config_parse_jumbo, ""},
-    {"rss", config_parse_rss, "[l3/l3l4/auto [mq_rx_none|mq_rx_rss], default l3 mq_rx_rss"},
+    {"rss", config_parse_rss, "[l3/l3l4/auto [mq_rx_none|mq_rx_rss|l3|l3l4], default l3 mq_rx_rss"},
     {"quiet", config_parse_quiet, ""},
     {"tcp_rst", config_parse_tcp_rst, "Number[0-1], default 1"},
     {"http_host", config_parse_http_host, "String, default " HTTP_HOST_DEFAULT},
     {"http_path", config_parse_http_path, "String, default " HTTP_PATH_DEFAULT},
     {"lport_range", config_parse_lport_range, "Number [Number], default 1 65535"},
+    {"client_hop", config_parse_client_hop, ""},
     {NULL, NULL, NULL}
 };
 
@@ -221,13 +228,16 @@ static int config_parse_keepalive_request_interval(struct config *cfg, char *str
     }
 
     val = atoi(str);
-    if (val <= 0) {
+    if (val < 0) {
         return -1;
     }
 
     if (rate == 1) {
-        if ((val % 10) != 0) {
+        if ((val >= 10) && (val % 10) != 0) {
             printf("Error: keepalive request interval must be a multiple of 10us\n");
+            return -1;
+        } else if (((val > 1)) && (val < 10) && (val % 2) != 0) {
+            printf("Error: keepalive request interval must be a multiple of 2us\n");
             return -1;
         }
 
@@ -282,7 +292,32 @@ static int config_parse_keepalive(int argc, char *argv[], void *data)
         }
     }
 
+    if ((cfg->keepalive_request_interval_us == 0) && (cfg->keepalive_request_num != 0)) {
+        return -1;
+    }
+
     cfg->keepalive = true;
+    return 0;
+}
+
+static int config_parse_pipeline(int argc, char *argv[], void *data)
+{
+    int val = 0;
+    struct config *cfg = data;
+
+    if (argc != 2) {
+        return -1;
+    }
+
+    if ((val = atoi(argv[1])) < 0) {
+        return -1;
+    }
+
+    if ((val < PIPELINE_MIN) || (val > PIPELINE_MAX)) {
+        return -1;
+    }
+
+    cfg->pipeline = (uint8_t)val;
     return 0;
 }
 
@@ -532,6 +567,10 @@ static int config_parse_port(int argc, char *argv[], void *data)
         if (eth_addr_init(&port->gateway_mac, argv[4]) != 0) {
             return -1;
         }
+    }
+
+    if (ipaddr_eq(&port->local_ip, &port->gateway_ip)) {
+        return -1;
     }
 
     sprintf(port->bond_name, "net_bonding%d", cfg->port_num);
@@ -824,6 +863,46 @@ static int config_parse_wait(int argc, char *argv[], void *data)
     return 0;
 }
 
+void config_set_payload(struct config *cfg, char *data, int len, int new_line)
+{
+    int i = 0;
+    int num = 'z' - 'a' + 1;
+    struct timeval tv;
+
+    if (len == 0) {
+        data[0] = 0;
+        return;
+    }
+
+    if (!cfg->payload_random) {
+        memset(data, 'a', len);
+    } else {
+        gettimeofday(&tv, NULL);
+        srandom(tv.tv_usec);
+        for (i = 0; i < len; i++) {
+            data[i] = 'a' + random() % num;
+        }
+    }
+
+    if ((len > 1) && new_line) {
+        data[len - 1] = '\n';
+    }
+
+    data[len] = 0;
+}
+
+static int config_parse_payload_random(int argc, __rte_unused char *argv[], void *data)
+{
+    struct config *cfg = data;
+
+    if (argc != 1) {
+        return -1;
+    }
+
+    cfg->payload_random = true;
+    return 0;
+}
+
 static int config_parse_payload_size(int argc, char *argv[], void *data)
 {
     int payload_size = 0;
@@ -1101,6 +1180,12 @@ static int config_parse_rss(int argc, __rte_unused char *argv[], void *data)
                     return -1;
                 }
                 mq_rx_rss = false;
+            } else if ((cfg->rss == RSS_AUTO) && ((strcmp(argv[2], "l3") == 0))) {
+                cfg->rss_auto = RSS_L3;
+                mq_rx_rss = true;
+            } else if ((cfg->rss == RSS_AUTO) && ((strcmp(argv[2], "l3l4") == 0))) {
+                cfg->rss_auto = RSS_L3L4;
+                mq_rx_rss = true;
             } else {
                 printf("Error: unknown rss config \'%s\'\n", argv[2]);
                 return -1;
@@ -1236,6 +1321,18 @@ static int config_parse_lport_range(int argc, char *argv[], void *data)
     return 0;
 }
 
+static int config_parse_client_hop(int argc, __rte_unused char *argv[], void *data)
+{
+    struct config *cfg = data;
+
+    if (argc != 1) {
+        return -1;
+    }
+
+    cfg->client_hop = true;
+    return 0;
+}
+
 static void config_manual(void)
 {
     config_keyword_help(g_config_keywords);
@@ -1325,7 +1422,16 @@ static int config_set_port_ip_range(struct config *cfg)
                 return -1;
             }
 
-            if (cfg->rss == RSS_NONE) {
+            if (cfg->flood) {
+                if (cfg->dip_list.num) {
+                    continue;
+                }
+
+                if (cfg->rss != RSS_L3L4) {
+                    cfg->rss = RSS_L3L4;
+                    printf("Warning: 'rss l3l4' is enabled\n");
+                }
+            } else if (cfg->rss == RSS_NONE) {
                 printf("Error: 'rss' is required if cpu num is not equal to server ip num\n");
                 return -1;
             }
@@ -1596,6 +1702,85 @@ static int config_check_server_addr(const struct config *cfg)
     return 0;
 }
 
+static int config_check_address_confliec_port(const struct config *cfg, const struct ip_group *ipg, int local)
+{
+    const ipaddr_t *addr = NULL;
+    const struct netif_port *port = NULL;
+    const struct ip_range *ip_range = NULL;
+
+    config_for_each_port(cfg, port) {
+        if (local) {
+            addr = &port->local_ip;
+        } else {
+            addr = &port->gateway_ip;
+        }
+        for_each_ip_range(ipg, ip_range) {
+            if (port->ipv6) {
+                if (ip_range_exist_ipv6(ip_range, addr)) {
+                    return -1;
+                }
+            } else {
+                if (ip_range_exist(ip_range, addr->ip)) {
+                    return -1;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int config_check_address_conflict(const struct config *cfg)
+{
+    const struct ip_group *cipg = NULL;
+    const struct ip_group *sipg = NULL;
+    const struct ip_range *ip_range0 = NULL;
+    const struct ip_range *ip_range1 = NULL;
+
+    cipg = &cfg->client_ip_group;
+    sipg = &cfg->server_ip_group;
+    for_each_ip_range(cipg, ip_range0) {
+        for_each_ip_range(sipg, ip_range1) {
+            if (config_ip_range_overlap(ip_range0, ip_range1)) {
+                printf("Error: client and server address conflict\n");
+                return -1;
+            }
+        }
+    }
+
+    /*
+     * client mode:
+     *  local ip cannot in server ip rage
+     *  gateway ip cannot in client ip rage
+     * server mode:
+     *  local ip cannot in client ip range
+     *  gateway ip cannot in server ip range
+     * */
+    if (cfg->server) {
+        if (config_check_address_confliec_port(cfg, cipg, 1) < 0) {
+            printf("Error: local ip conflict with client address\n");
+            return -1;
+        }
+
+        if (config_check_address_confliec_port(cfg, sipg, 0) < 0) {
+            printf("Error: gateway ip conflict with server address\n");
+            return -1;
+        }
+    } else {
+        if (config_check_address_confliec_port(cfg, sipg, 1) < 0) {
+            printf("Error: local ip conflict with server address\n");
+            return -1;
+        }
+
+        if (config_check_address_confliec_port(cfg, cipg, 0) < 0) {
+            printf("Error: gateway ip conflict with client address\n");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static int config_check_wait(struct config *cfg)
 {
     if (cfg->server) {
@@ -1744,7 +1929,7 @@ static int config_check_size(struct config *cfg)
     }
 
     http_set_payload(cfg, payload_size);
-    udp_set_payload(payload_size);
+    udp_set_payload(cfg, payload_size);
 
     return 0;
 }
@@ -1794,12 +1979,11 @@ static int config_server_addr_check_num(struct config *cfg, int num)
 
 static int config_check_rss(struct config *cfg)
 {
-
     if (cfg->rss == RSS_NONE) {
         return 0;
     }
 
-    if ((cfg->cpu_num == cfg->port_num) || (cfg->flood)) {
+    if (cfg->cpu_num == cfg->port_num) {
         printf("Warnning: rss is disabled\n");
         cfg->rss = RSS_NONE;
     }
@@ -1807,6 +1991,13 @@ static int config_check_rss(struct config *cfg)
     if (cfg->vxlan) {
         printf("Error: rss is not supported for vxlan.\n");
         return -1;
+    }
+
+    if (cfg->flood) {
+        if ((cfg->rss == RSS_AUTO) || (cfg->rss == RSS_L3)) {
+            printf("Error: \'rss auto|l3\' conflicts with \'flood\'\n");
+            return -1;
+        }
     }
 
     /* must be 1 server ip */
@@ -1829,8 +2020,26 @@ static int config_check_keepalive(struct config *cfg)
             return -1;
         }
 
+        if (cfg->keepalive == false) {
+            return 0;
+        }
+
+        if (cfg->flood && (cfg->keepalive_request_interval_us == 0)) {
+            printf("Error: 'flood' requires a positive keepalive request interval\n");
+            return -1;
+        }
+
         /* interval is less 100us, eg 10us, 20us ...  */
-        if (cfg->keepalive_request_interval_us < 50) {
+        if (cfg->keepalive_request_interval_us == 1) {
+            /* 0.5 us */
+            ticks_per_sec = 1000 * 1000 * 2;
+        } else if (cfg->keepalive_request_interval_us == 2) {
+            /* 1 us */
+            ticks_per_sec = 1000 * 1000;
+        } else if (cfg->keepalive_request_interval_us < 10) {
+            /* 2 us */
+            ticks_per_sec = 1000 * 500;
+        } else if (cfg->keepalive_request_interval_us < 50) {
            /* 5 us */
             ticks_per_sec = 1000 * 100 * 2;
         } else if (cfg->keepalive_request_interval_us < 100) {
@@ -1848,6 +2057,35 @@ static int config_check_keepalive(struct config *cfg)
         cfg->ticks_per_sec = ticks_per_sec;
     } else {
         cfg->keepalive_request_num = 0;
+    }
+
+    return 0;
+}
+
+static int config_check_pipeline(struct config *cfg)
+{
+    if (cfg->pipeline == 0) {
+        return 0;
+    }
+
+    if (cfg->server) {
+        printf("Error: \'pipeline\' cannot set in server mode\n");
+        return -1;
+    }
+
+    if (cfg->protocol == IPPROTO_TCP) {
+        printf("Error: \'pipeline\' cannot support tcp\n");
+        return -1;
+    }
+
+    if (!cfg->keepalive) {
+        printf("Error: \'pipeline\' requires \'keepalive\'\n");
+        return -1;
+    }
+
+    if ((cfg->flood == false) && (cfg->keepalive_request_interval_us)) {
+        printf("Error: \'pipeline\' requires zero keepalive interval\n");
+        return -1;
     }
 
     return 0;
@@ -2010,6 +2248,10 @@ int config_parse(int argc, char **argv, struct config *cfg)
         return -1;
     }
 
+    if (config_check_pipeline(cfg) < 0) {
+        return -1;
+    }
+
     /* called before config_check_size() */
     if (config_check_http(cfg) < 0) {
         return -1;
@@ -2032,6 +2274,10 @@ int config_parse(int argc, char **argv, struct config *cfg)
     }
 
     if (config_check_server_addr(cfg) < 0) {
+        return -1;
+    }
+
+    if (config_check_address_conflict(cfg) < 0) {
         return -1;
     }
 
@@ -2059,6 +2305,10 @@ int config_parse(int argc, char **argv, struct config *cfg)
         return -1;
     }
 
+    if (config_check_rss(cfg) < 0) {
+        return -1;
+    }
+
     if (config_set_port_ip_range(cfg) != 0) {
         return -1;
     }
@@ -2076,10 +2326,6 @@ int config_parse(int argc, char **argv, struct config *cfg)
     }
 
     if (config_check_target(cfg) < 0) {
-        return -1;
-    }
-
-    if (config_check_rss(cfg) < 0) {
         return -1;
     }
 

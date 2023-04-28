@@ -25,8 +25,8 @@ dperf is a DPDK based 100Gbps network performance and load testing software.
 |6|6|10,027,172|
 
 ### HTTP Throughput per Second
-|Client Cores|Server Cores|RX(Gbps)|TX(Gbps))|Client CPU Usage(%)|Server CPU Usage(%)|
-|------------|------------|--------|---------|-------------------|-------------------|
+|Client Cores|Server Cores|RX(Gbps)|TX(Gbps)|Client CPU Usage(%)|Server CPU Usage(%)|
+|------------|------------|--------|--------|-------------------|-------------------|
 |1|1|18|18|60|59|
 |2|2|35|35|60|59|
 |4|4|46|46|43|43|
@@ -35,7 +35,7 @@ dperf is a DPDK based 100Gbps network performance and load testing software.
 |Client Cores|Server Cores|Current Connections|Client CPU Usage(%)|Server CPU Usage(%)|
 |------------|------------|-------------------|-------------------|-------------------|
 |1|1|100,000,000|34|39|
-|2|1|200,000,000|36|39|
+|2|2|200,000,000|36|39|
 |4|4|400,000,000|40|41|
 
 ### UDP TX PPS
@@ -131,8 +131,13 @@ Below example will start a HTTP CPS stress test.
  - dperf does not have routing capability. It is recommended to build a test environment with a switch.
 
 ## Related Articles
+- [dperf FAQ(zh)](https://zhuanlan.zhihu.com/p/561093951)
 - [How to set up dperf](https://metonymical.hatenablog.com/entry/2022/02/11/234927)
 - [Using dperf to test network bandwidth](test/performance/bandwidth/README.md)
+- [DPVS v1.9.2 Performance Tests by dperf](https://github.com/iqiyi/dpvs/blob/master/test/release/v1.9.2/performance.md)
+- [Using dperf to test 100Gbps bandwidth(zh)](https://zhuanlan.zhihu.com/p/601137162)
+- [How to install dperf on ubuntu(zh)](https://github.com/digger-yu/blog/blob/main/how%20to%20install%20dperf%20on%20ubuntu.md)
+- [Using dperf to test the performance of DPVS(zh)](https://blog.csdn.net/yuubeka/article/details/128945241)
 
 ## Contributing
 

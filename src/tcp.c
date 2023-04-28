@@ -325,6 +325,8 @@ static void tcp_reply_rst(struct work_space *ws, struct rte_mbuf *m)
     struct eth_hdr *eth = NULL;
     struct iphdr *iph = NULL;
     struct tcphdr *th = NULL;
+    int nlen = 0;
+    int olen = 0;
 
     /* not support rst yet */
     if (ws->vxlan) {
@@ -336,25 +338,24 @@ static void tcp_reply_rst(struct work_space *ws, struct rte_mbuf *m)
     eth = mbuf_eth_hdr(m);
     iph = mbuf_ip_hdr(m);
     th = mbuf_tcp_hdr(m);
-
+    olen = rte_pktmbuf_data_len(m);
     eth_addr_swap(eth);
     if (iph->version == 4) {
         tcp_rst_set_ip(iph);
         tcp_rst_set_tcp(th);
         th->th_sum = RTE_IPV4_UDPTCP_CKSUM(iph, th);
         iph->check = RTE_IPV4_CKSUM(iph);
-        rte_pktmbuf_data_len(m) = sizeof(struct eth_hdr)
-                                + sizeof(struct iphdr)
-                                + sizeof(struct tcphdr);
+        nlen = sizeof(struct eth_hdr) + sizeof(struct iphdr) + sizeof(struct tcphdr);
     } else {
         tcp_rst_set_ipv6((struct ip6_hdr *)iph);
         tcp_rst_set_tcp(th);
         th->th_sum = RTE_IPV6_UDPTCP_CKSUM(iph, th);
-        rte_pktmbuf_data_len(m) = sizeof(struct eth_hdr)
-                                + sizeof(struct ip6_hdr)
-                                + sizeof(struct tcphdr);
+        nlen = sizeof(struct eth_hdr) + sizeof(struct ip6_hdr) + sizeof(struct tcphdr);
     }
 
+    if (olen > nlen) {
+        rte_pktmbuf_trim(m, olen - nlen);
+    }
     net_stats_rst_tx();
     work_space_tx_send(ws, m);
 }
@@ -502,7 +503,6 @@ static inline bool tcp_check_sequence(struct work_space *ws, struct socket *sk, 
         if ((sk->timer_tsc + TSC_PER_SEC) < work_space_tsc(ws)) {
             tcp_do_retransmit(ws, sk);
         }
-
     } else if (ack == sk->snd_una) {
         /* lost ack */
         if (tcp_seq_le(seq, sk->rcv_nxt)) {
@@ -679,6 +679,22 @@ static inline uint8_t http_client_process_data(struct work_space *ws, struct soc
 }
 #endif
 
+static inline void tcp_send_keepalive_request(struct work_space *ws, struct socket *sk)
+{
+    if (work_space_in_duration(ws)) {
+        sk->keepalive_request_num++;
+        tcp_reply(ws, sk, TH_ACK | TH_PUSH);
+        if (unlikely((g_config.keepalive_request_num > 0)
+                     && (sk->keepalive_request_num >= g_config.keepalive_request_num))) {
+            sk->keepalive = 0;
+        }
+    } else {
+        sk->state = SK_FIN_WAIT_1;
+        tcp_reply(ws, sk, TH_ACK | TH_FIN);
+        sk->keepalive = 0;
+    }
+}
+
 static inline void tcp_client_process_data(struct work_space *ws, struct socket *sk, struct rte_mbuf *m,
     struct iphdr *iph, struct tcphdr *th)
 {
@@ -709,7 +725,11 @@ static inline void tcp_client_process_data(struct work_space *ws, struct socket 
                 if (sk->keepalive == 0) {
                     tx_flags |= TH_FIN;
                 } else {
-                    socket_start_keepalive_timer(sk, sk->timer_tsc);
+                    if (g_config.keepalive_request_interval) {
+                        socket_start_keepalive_timer(sk, sk->timer_tsc);
+                    } else {
+                        tcp_send_keepalive_request(ws, sk);
+                    }
                 }
             }
         }
@@ -842,18 +862,7 @@ static inline void tcp_do_keepalive(struct work_space *ws, struct socket *sk)
     }
 
     if (g_config.server == 0) {
-        if (work_space_in_duration(ws)) {
-            sk->keepalive_request_num++;
-            tcp_reply(ws, sk, TH_ACK | TH_PUSH);
-            if (unlikely((g_config.keepalive_request_num > 0)
-                         && (sk->keepalive_request_num >= g_config.keepalive_request_num))) {
-                sk->keepalive = 0;
-            }
-        } else {
-            sk->state = SK_FIN_WAIT_1;
-            tcp_reply(ws, sk, TH_ACK | TH_FIN);
-            sk->keepalive = 0;
-        }
+        tcp_send_keepalive_request(ws, sk);
     }
 }
 

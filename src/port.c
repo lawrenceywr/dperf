@@ -36,7 +36,9 @@ static struct rte_eth_conf g_port_conf = {
 #if RTE_VERSION < RTE_VERSION_NUM(21, 11, 0, 0)
         .max_rx_pkt_len = ETHER_MAX_LEN,
 #endif
+#if RTE_VERSION < RTE_VERSION_NUM(22, 11, 0, 0)
         .split_hdr_size = 0,
+#endif
 #if RTE_VERSION < RTE_VERSION_NUM(18, 11, 0, 0)
         .hw_ip_checksum = 1,
         .hw_vlan_strip  = 1,
@@ -95,7 +97,7 @@ static int port_config_vlan(struct rte_eth_conf *conf, struct rte_eth_dev_info *
     }
 
     if (dev_info->rx_offload_capa & RTE_ETH_RX_OFFLOAD_VLAN_STRIP) {
-        conf->rxmode.offloads |= DEV_RX_OFFLOAD_VLAN_STRIP;
+        conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_VLAN_STRIP;
     } else {
         printf("Error: port cannot strip vlan\n");
         return -1;
@@ -198,8 +200,9 @@ static int port_init_port_id(struct netif_port *port)
     for (i = 0; i < port->pci_num; i++) {
         pci = port->pci_list[i];
         if (rte_eth_dev_get_port_by_name(pci, &port_id) != 0) {
-            printf("cannot found port id by pic %s\n", pci);
-            return -1;
+            printf("warning: cannot find port id by pic %s\n", pci);
+        } else {
+            port_id = (uint16_t)i;
         }
 
         port->port_id_list[i] = port_id;
@@ -255,6 +258,7 @@ int port_init_all(struct config *cfg)
 #endif
 
     if ((nb_ports == 0) || (nb_ports < cfg->port_num)) {
+        printf("not enough ports available: avail %d require %d\n", nb_ports, cfg->port_num);
         return -1;
     }
 
